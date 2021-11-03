@@ -1,37 +1,62 @@
-# smartmirror.py
-# requirements
-# requests, feedparser, traceback, Pillow
+"""Smart mirror app.
 
-from Tkinter import *
+-Uses weather information from openweathermap.org,
+you can create an account at https://home.openweathermap.org/users/sign_up
+-News from the Google News.
+"""
+
+# Utils imports
+import time
 import locale
 import threading
-import time
-import requests
 import json
 import traceback
-import feedparser
-
-from PIL import Image, ImageTk
 from contextlib import contextmanager
+from tkinter import (
+    Frame,
+    Label,
+    BOTH,
+    LEFT,
+    RIGHT,
+    TOP,
+    BOTTOM,
+    YES,
+    W,
+    E,
+    N,
+    S,
+    Tk
+)
+
+# Third party imports
+import requests
+import feedparser
+from PIL import Image, ImageTk
+
 
 LOCALE_LOCK = threading.Lock()
 
-ui_locale = '' # e.g. 'fr_FR' fro French, '' as default
-time_format = 12 # 12 or 24
-date_format = "%b %d, %Y" # check python doc for strftime() for options
-news_country_code = 'us'
-weather_api_token = '<TOKEN>' # create account at https://darksky.net/dev/
-weather_lang = 'en' # see https://darksky.net/dev/docs/forecast for full list of language parameters values
-weather_unit = 'us' # see https://darksky.net/dev/docs/forecast for full list of unit parameters values
-latitude = None # Set this if IP location lookup does not work for you (must be a string)
-longitude = None # Set this if IP location lookup does not work for you (must be a string)
-xlarge_text_size = 94
-large_text_size = 48
-medium_text_size = 28
-small_text_size = 18
+# Constants
+UI_LOCALE = ''
+TIME_FORMAT = 12
+DATE_FORMAT = "%b %d, %Y"
+NEWS_COUNTRY_CODE = 'es-AR'
+NEWS_URL = 'https://news.google.com/rss?hl'
+WEATHER_API_TOKEN = 'ea5fa6b82c3c1aeee6c40de12c7bf2e8'
+WEATHER_LANG = 'en'
+WEATHER_API_URL = 'http://api.openweathermap.org/data/2.5/weather'
+GEOIP_API_TOKEN = ''
+LATITUDE = -26.6316062
+LONGITUDE = -54.1174863
+XLARGE_TEXT_SIZE = 90
+LARGE_TEXT_SIZE = 44
+MEDIUM_TEXT_SIZE = 24
+SMALL_TEXT_SIZE = 14
+
 
 @contextmanager
-def setlocale(name): #thread proof function to work with locale
+def setlocale(name):
+    """thread proof function to work with locale."""
     with LOCALE_LOCK:
         saved = locale.setlocale(locale.LC_ALL)
         try:
@@ -39,133 +64,194 @@ def setlocale(name): #thread proof function to work with locale
         finally:
             locale.setlocale(locale.LC_ALL, saved)
 
-# maps open weather icons to
-# icon reading is not impacted by the 'lang' parameter
+
+# maps open weather icons
 icon_lookup = {
-    'clear-day': "assets/Sun.png",  # clear sky day
-    'wind': "assets/Wind.png",   #wind
-    'cloudy': "assets/Cloud.png",  # cloudy day
-    'partly-cloudy-day': "assets/PartlySunny.png",  # partly cloudy day
-    'rain': "assets/Rain.png",  # rain day
-    'snow': "assets/Snow.png",  # snow day
-    'snow-thin': "assets/Snow.png",  # sleet day
-    'fog': "assets/Haze.png",  # fog day
-    'clear-night': "assets/Moon.png",  # clear sky night
-    'partly-cloudy-night': "assets/PartlyMoon.png",  # scattered clouds night
-    'thunderstorm': "assets/Storm.png",  # thunderstorm
-    'tornado': "assests/Tornado.png",    # tornado
-    'hail': "assests/Hail.png"  # hail
+    '01d': "assets/Sun.png",  # clear sky day
+    '01n': "assets/Moon.png",  # clear sky night
+    '02d': "assets/PartlySunny.png",  # few clouds day
+    '02n': "assets/PartlyMoon.png",  # few clouds night
+    '03d': "assets/Cloud.png",  # scattered clouds day
+    '03n': "assets/Cloud.png",  # scattered clouds night
+    '04d': "assets/Cloud.png",  # broken clouds day
+    '04n': "assets/Cloud.png",  # broken clouds night
+    '09d': "assets/Rain.png",  # shower rain day
+    '09n': "assets/Rain.png",  # shower rain night
+    '10d': "assets/Rain.png",  # rain day
+    '10n': "assets/Rain.png",  # rain night
+    '11d': "assets/Storm.png",  # thunderstorm day
+    '11n': "assets/Storm.png",  # thunderstorm night
+    '13d': "assets/Snow.png",  # snow day
+    '13n': "assets/Snow.png",  # snow night
+    '50d': "assets/Haze.png",  # mist day
+    '50n': "assets/Haze.png",  # mist night
 }
 
 
 class Clock(Frame):
+    """Display a clock in the window."""
     def __init__(self, parent, *args, **kwargs):
         Frame.__init__(self, parent, bg='black')
+
         # initialize time label
-        self.time1 = ''
-        self.timeLbl = Label(self, font=('Helvetica', large_text_size), fg="white", bg="black")
-        self.timeLbl.pack(side=TOP, anchor=E)
+        self.time_old = ''
+        self.time_lbl = Label(
+            self, font=('monospace', LARGE_TEXT_SIZE),
+            fg="white", bg="black"
+        )
+        self.time_lbl.pack(side=TOP, anchor=E)
+
         # initialize day of week
-        self.day_of_week1 = ''
-        self.dayOWLbl = Label(self, text=self.day_of_week1, font=('Helvetica', small_text_size), fg="white", bg="black")
-        self.dayOWLbl.pack(side=TOP, anchor=E)
+        self.day_of_week_old = ''
+        self.day_of_wk_lbl = Label(
+            self, text=self.day_of_week_old,
+            font=('monospace', SMALL_TEXT_SIZE),
+            fg="white",
+            bg="black"
+        )
+        self.day_of_wk_lbl.pack(side=TOP, anchor=E)
+
         # initialize date label
-        self.date1 = ''
-        self.dateLbl = Label(self, text=self.date1, font=('Helvetica', small_text_size), fg="white", bg="black")
-        self.dateLbl.pack(side=TOP, anchor=E)
+        self.date_old = ''
+        self.date_lbl = Label(
+            self, text=self.date_old,
+            font=('monospace', SMALL_TEXT_SIZE),
+            fg="white", bg="black"
+        )
+
+        self.date_lbl.pack(side=TOP, anchor=E)
         self.tick()
 
     def tick(self):
-        with setlocale(ui_locale):
-            if time_format == 12:
-                time2 = time.strftime('%I:%M %p') #hour in 12h format
+        """Tick the clock."""
+        with setlocale(UI_LOCALE):
+            if TIME_FORMAT == 12:
+                time_updated = time.strftime('%I:%M%p')  # hour in 12h format
             else:
-                time2 = time.strftime('%H:%M') #hour in 24h format
+                time_updated = time.strftime('%H:%M')  # hour in 24h format
 
-            day_of_week2 = time.strftime('%A')
-            date2 = time.strftime(date_format)
+            day_of_week_updated = time.strftime('%A')
+            date_updated = time.strftime(DATE_FORMAT)
+
             # if time string has changed, update it
-            if time2 != self.time1:
-                self.time1 = time2
-                self.timeLbl.config(text=time2)
-            if day_of_week2 != self.day_of_week1:
-                self.day_of_week1 = day_of_week2
-                self.dayOWLbl.config(text=day_of_week2)
-            if date2 != self.date1:
-                self.date1 = date2
-                self.dateLbl.config(text=date2)
+            if time_updated != self.time_old:
+                self.time_old = time_updated
+                self.time_lbl.config(text=time_updated)
+            if day_of_week_updated != self.day_of_week_old:
+                self.day_of_week_old = day_of_week_updated
+                self.day_of_wk_lbl.config(text=day_of_week_updated)
+            if date_updated != self.date_old:
+                self.date_old = date_updated
+                self.date_lbl.config(text=date_updated)
             # calls itself every 200 milliseconds
             # to update the time display as needed
             # could use >200 ms, but display gets jerky
-            self.timeLbl.after(200, self.tick)
+            self.time_lbl.after(200, self.tick)
 
 
 class Weather(Frame):
+    """Display openweathermap.org weather information on window."""
+
     def __init__(self, parent, *args, **kwargs):
         Frame.__init__(self, parent, bg='black')
         self.temperature = ''
         self.forecast = ''
-        self.location = ''
+        self.actual_location = ''
         self.currently = ''
         self.icon = ''
-        self.degreeFrm = Frame(self, bg="black")
-        self.degreeFrm.pack(side=TOP, anchor=W)
-        self.temperatureLbl = Label(self.degreeFrm, font=('Helvetica', xlarge_text_size), fg="white", bg="black")
-        self.temperatureLbl.pack(side=LEFT, anchor=N)
-        self.iconLbl = Label(self.degreeFrm, bg="black")
-        self.iconLbl.pack(side=LEFT, anchor=N, padx=20)
-        self.currentlyLbl = Label(self, font=('Helvetica', medium_text_size), fg="white", bg="black")
-        self.currentlyLbl.pack(side=TOP, anchor=W)
-        self.forecastLbl = Label(self, font=('Helvetica', small_text_size), fg="white", bg="black")
-        self.forecastLbl.pack(side=TOP, anchor=W)
-        self.locationLbl = Label(self, font=('Helvetica', small_text_size), fg="white", bg="black")
-        self.locationLbl.pack(side=TOP, anchor=W)
+
+        self.degree_frm = Frame(self, bg="black")
+        self.degree_frm.pack(side=TOP, anchor=W)
+        self.temperature_lbl = Label(
+            self.degree_frm,
+            font=('monospace', XLARGE_TEXT_SIZE),
+            fg="white",
+            bg="black"
+        )
+        self.temperature_lbl.pack(side=LEFT, anchor=N)
+
+        self.icon_lbl = Label(self.degree_frm, bg="black")
+        self.icon_lbl.pack(side=LEFT, anchor=N, padx=20)
+        self.currently_lbl = Label(
+            self,
+            font=('monospace', MEDIUM_TEXT_SIZE),
+            fg="white",
+            bg="black"
+        )
+        self.currently_lbl.pack(side=TOP, anchor=W)
+        self.forecast_lbl = Label(
+            self,
+            font=('monospace', SMALL_TEXT_SIZE),
+            fg="white",
+            bg="black"
+        )
+        self.forecast_lbl.pack(side=TOP, anchor=W)
+        self.actual_location_lbl = Label(
+            self,
+            font=('monospace', SMALL_TEXT_SIZE),
+            fg="white",
+            bg="black"
+        )
+        self.actual_location_lbl.pack(side=TOP, anchor=W)
         self.get_weather()
 
     def get_ip(self):
+        """Get your ip."""
         try:
             ip_url = "http://jsonip.com/"
             req = requests.get(ip_url)
-            ip_json = json.loads(req.text)
+            ip_json = req.json()
             return ip_json['ip']
-        except Exception as e:
+        except (json.decoder.JSONDecodeError, KeyError):
             traceback.print_exc()
-            return "Error: %s. Cannot get ip." % e
+            return "Error: Cannot get ip."
 
     def get_weather(self):
+        """Get weather method."""
+
         try:
+            if LATITUDE is None and LONGITUDE is None:
+                # get actual_location
+                actual_location_req_url = f'https://api.freegeoip.app/json\
+                    /{self.get_ip()}?apikey={GEOIP_API_TOKEN}'
 
-            if latitude is None and longitude is None:
-                # get location
-                location_req_url = "http://freegeoip.net/json/%s" % self.get_ip()
-                r = requests.get(location_req_url)
-                location_obj = json.loads(r.text)
+                request = requests.get(actual_location_req_url)
+                actual_location_obj = json.loads(request.text)
 
-                lat = location_obj['latitude']
-                lon = location_obj['longitude']
+                lat = actual_location_obj['latitude']
+                lon = actual_location_obj['longitude']
 
-                location2 = "%s, %s" % (location_obj['city'], location_obj['region_code'])
+                actual_location2 = "%s, %s" % (
+                    actual_location_obj['city'],
+                    actual_location_obj['region_code']
+                )
 
                 # get weather
-                weather_req_url = "https://api.darksky.net/forecast/%s/%s,%s?lang=%s&units=%s" % (weather_api_token, lat,lon,weather_lang,weather_unit)
+                weather_req_url = f"{WEATHER_API_URL}?lat={lat}&\
+                    lon={lon}&lang={WEATHER_LANG}&appid={WEATHER_API_TOKEN}"
+
             else:
-                location2 = ""
+                actual_location2 = ""
                 # get weather
-                weather_req_url = "https://api.darksky.net/forecast/%s/%s,%s?lang=%s&units=%s" % (weather_api_token, latitude, longitude, weather_lang, weather_unit)
+                weather_req_url = f"{WEATHER_API_URL}?lat={LATITUDE}&lon={LONGITUDE}&\
+                    lang={WEATHER_LANG}&appid={WEATHER_API_TOKEN}"
 
-            r = requests.get(weather_req_url)
-            weather_obj = json.loads(r.text)
+            request = requests.get(weather_req_url)
+            weather_obj = request.json()
 
-            degree_sign= u'\N{DEGREE SIGN}'
-            temperature2 = "%s%s" % (str(int(weather_obj['currently']['temperature'])), degree_sign)
-            currently2 = weather_obj['currently']['summary']
-            forecast2 = weather_obj["hourly"]["summary"]
+            degree_sign = u'\N{DEGREE SIGN}'
 
-            icon_id = weather_obj['currently']['icon']
-            icon2 = None
+            celsius_temp = self.convert_kelvin_to_celsius(
+                int(weather_obj['main']['temp'])
+            )
+            temperature2 = "%s%s" % (str(celsius_temp), degree_sign)
 
-            if icon_id in icon_lookup:
-                icon2 = icon_lookup[icon_id]
+            currently2 = weather_obj['weather'][0]['main']
+            forecast2 = weather_obj['weather'][0]['description']
+
+            icon_id = weather_obj['weather'][0]['icon']
+
+            icon2 = icon_lookup.get(icon_id, None) or None
 
             if icon2 is not None:
                 if self.icon != icon2:
@@ -175,73 +261,87 @@ class Weather(Frame):
                     image = image.convert('RGB')
                     photo = ImageTk.PhotoImage(image)
 
-                    self.iconLbl.config(image=photo)
-                    self.iconLbl.image = photo
+                    self.icon_lbl.config(image=photo)
+                    self.icon_lbl.image = photo
             else:
                 # remove image
-                self.iconLbl.config(image='')
+                self.icon_lbl.config(image='')
 
             if self.currently != currently2:
                 self.currently = currently2
-                self.currentlyLbl.config(text=currently2)
+                self.currently_lbl.config(text=currently2)
             if self.forecast != forecast2:
                 self.forecast = forecast2
-                self.forecastLbl.config(text=forecast2)
+                self.forecast_lbl.config(text=forecast2)
             if self.temperature != temperature2:
                 self.temperature = temperature2
-                self.temperatureLbl.config(text=temperature2)
-            if self.location != location2:
-                if location2 == ", ":
-                    self.location = "Cannot Pinpoint Location"
-                    self.locationLbl.config(text="Cannot Pinpoint Location")
+                self.temperature_lbl.config(text=temperature2)
+            if self.actual_location != actual_location2:
+                if actual_location2 == ", ":
+                    self.actual_location = "Cannot Pinpoint Location"
+                    self.actual_location_lbl.config(text="Cannot Pinpoint Location")
                 else:
-                    self.location = location2
-                    self.locationLbl.config(text=location2)
+                    self.actual_location = actual_location2
+                    self.actual_location_lbl.config(text=actual_location2)
         except Exception as e:
             traceback.print_exc()
-            print "Error: %s. Cannot get weather." % e
+            print(f"Error: {e}. Cannot get weather.")
 
         self.after(600000, self.get_weather)
 
     @staticmethod
     def convert_kelvin_to_fahrenheit(kelvin_temp):
+        """This method converts kelvin to fahrenheit."""
         return 1.8 * (kelvin_temp - 273) + 32
+
+    @staticmethod
+    def convert_kelvin_to_celsius(kelvin_temp):
+        """This method converts a temperature from Kelvin to Celsius."""
+        return kelvin_temp - 273
 
 
 class News(Frame):
+    """Display news title from google news."""
     def __init__(self, parent, *args, **kwargs):
         Frame.__init__(self, parent, *args, **kwargs)
         self.config(bg='black')
-        self.title = 'News' # 'News' is more internationally generic
-        self.newsLbl = Label(self, text=self.title, font=('Helvetica', medium_text_size), fg="white", bg="black")
-        self.newsLbl.pack(side=TOP, anchor=W)
-        self.headlinesContainer = Frame(self, bg="black")
-        self.headlinesContainer.pack(side=TOP)
+        self.title = 'News'
+        self.news_lbl = Label(
+            self,
+            text=self.title,
+            font=('monospace', MEDIUM_TEXT_SIZE),
+            fg="white",
+            bg="black"
+        )
+        self.news_lbl.pack(side=TOP, anchor=W)
+        self.headlines_container = Frame(self, bg="black")
+        self.headlines_container.pack(side=TOP)
         self.get_headlines()
 
     def get_headlines(self):
         try:
             # remove all children
-            for widget in self.headlinesContainer.winfo_children():
+            for widget in self.headlines_container.winfo_children():
                 widget.destroy()
-            if news_country_code == None:
-                headlines_url = "https://news.google.com/news?ned=us&output=rss"
+            if NEWS_COUNTRY_CODE is None:
+                headlines_url = f'{NEWS_URL}=en-US'
             else:
-                headlines_url = "https://news.google.com/news?ned=%s&output=rss" % news_country_code
+                headlines_url = f'{NEWS_URL}={NEWS_COUNTRY_CODE}'
 
             feed = feedparser.parse(headlines_url)
 
             for post in feed.entries[0:5]:
-                headline = NewsHeadline(self.headlinesContainer, post.title)
+                headline = NewsHeadline(self.headlines_container, post.title)
                 headline.pack(side=TOP, anchor=W)
         except Exception as e:
             traceback.print_exc()
-            print "Error: %s. Cannot get news." % e
+            print(f"Error: {e}. Cannot get news.")
 
         self.after(600000, self.get_headlines)
 
 
 class NewsHeadline(Frame):
+    """Create news headline."""
     def __init__(self, parent, event_name=""):
         Frame.__init__(self, parent, bg='black')
 
@@ -250,23 +350,31 @@ class NewsHeadline(Frame):
         image = image.convert('RGB')
         photo = ImageTk.PhotoImage(image)
 
-        self.iconLbl = Label(self, bg='black', image=photo)
-        self.iconLbl.image = photo
-        self.iconLbl.pack(side=LEFT, anchor=N)
+        self.icon_lbl = Label(self, bg='black', image=photo)
+        self.icon_lbl.image = photo
+        self.icon_lbl.pack(side=LEFT, anchor=N)
 
-        self.eventName = event_name
-        self.eventNameLbl = Label(self, text=self.eventName, font=('Helvetica', small_text_size), fg="white", bg="black")
-        self.eventNameLbl.pack(side=LEFT, anchor=N)
+        self.event_name = event_name
+        self.event_name_lbl = Label(
+            self, text=self.event_name,
+            font=('monospace', SMALL_TEXT_SIZE),
+            fg="white", bg="black"
+        )
+        self.event_name_lbl.pack(side=LEFT, anchor=N)
 
 
 class Calendar(Frame):
     def __init__(self, parent, *args, **kwargs):
         Frame.__init__(self, parent, bg='black')
         self.title = 'Calendar Events'
-        self.calendarLbl = Label(self, text=self.title, font=('Helvetica', medium_text_size), fg="white", bg="black")
-        self.calendarLbl.pack(side=TOP, anchor=E)
-        self.calendarEventContainer = Frame(self, bg='black')
-        self.calendarEventContainer.pack(side=TOP, anchor=E)
+        self.calendar_lbl = Label(
+            self, text=self.title,
+            font=('monospace', MEDIUM_TEXT_SIZE),
+            fg="white", bg="black"
+        )
+        self.calendar_lbl.pack(side=TOP, anchor=E)
+        self.calendar_event_container = Frame(self, bg='black')
+        self.calendar_event_container.pack(side=TOP, anchor=E)
         self.get_events()
 
     def get_events(self):
@@ -274,10 +382,10 @@ class Calendar(Frame):
         # reference https://developers.google.com/google-apps/calendar/quickstart/python
 
         # remove all children
-        for widget in self.calendarEventContainer.winfo_children():
+        for widget in self.calendar_event_container.winfo_children():
             widget.destroy()
 
-        calendar_event = CalendarEvent(self.calendarEventContainer)
+        calendar_event = CalendarEvent(self.calendar_event_container)
         calendar_event.pack(side=TOP, anchor=E)
         pass
 
@@ -285,45 +393,53 @@ class Calendar(Frame):
 class CalendarEvent(Frame):
     def __init__(self, parent, event_name="Event 1"):
         Frame.__init__(self, parent, bg='black')
-        self.eventName = event_name
-        self.eventNameLbl = Label(self, text=self.eventName, font=('Helvetica', small_text_size), fg="white", bg="black")
-        self.eventNameLbl.pack(side=TOP, anchor=E)
+        self.event_name = event_name
+        self.event_name_lbl = Label(
+            self, text=self.event_name,
+            font=('monospace', SMALL_TEXT_SIZE),
+            fg="white", bg="black"
+        )
+        self.event_name_lbl.pack(side=TOP, anchor=E)
 
 
 class FullscreenWindow:
+    """Instanciate a full screen window using tkinter."""
 
     def __init__(self):
         self.tk = Tk()
         self.tk.configure(background='black')
-        self.topFrame = Frame(self.tk, background = 'black')
-        self.bottomFrame = Frame(self.tk, background = 'black')
-        self.topFrame.pack(side = TOP, fill=BOTH, expand = YES)
-        self.bottomFrame.pack(side = BOTTOM, fill=BOTH, expand = YES)
+        self.top_frame = Frame(self.tk, background='black')
+        self.bottom_frame = Frame(self.tk, background='black')
+        self.top_frame.pack(side=TOP, fill=BOTH, expand=YES)
+        self.bottom_frame.pack(side=BOTTOM, fill=BOTH, expand=YES)
         self.state = False
         self.tk.bind("<Return>", self.toggle_fullscreen)
         self.tk.bind("<Escape>", self.end_fullscreen)
         # clock
-        self.clock = Clock(self.topFrame)
+        self.clock = Clock(self.top_frame)
         self.clock.pack(side=RIGHT, anchor=N, padx=100, pady=60)
         # weather
-        self.weather = Weather(self.topFrame)
+        self.weather = Weather(self.top_frame)
         self.weather.pack(side=LEFT, anchor=N, padx=100, pady=60)
         # news
-        self.news = News(self.bottomFrame)
+        self.news = News(self.bottom_frame)
         self.news.pack(side=LEFT, anchor=S, padx=100, pady=60)
         # calender - removing for now
-        # self.calender = Calendar(self.bottomFrame)
+        # self.calender = Calendar(self.bottom_frame)
         # self.calender.pack(side = RIGHT, anchor=S, padx=100, pady=60)
 
     def toggle_fullscreen(self, event=None):
+        """Toogle fullscreen status."""
         self.state = not self.state  # Just toggling the boolean
         self.tk.attributes("-fullscreen", self.state)
         return "break"
 
     def end_fullscreen(self, event=None):
+        """End fullscreen status."""
         self.state = False
         self.tk.attributes("-fullscreen", False)
         return "break"
+
 
 if __name__ == '__main__':
     w = FullscreenWindow()

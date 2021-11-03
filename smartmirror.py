@@ -42,7 +42,7 @@ TIME_FORMAT = 12
 DATE_FORMAT = "%b %d, %Y"
 NEWS_COUNTRY_CODE = 'es-AR'
 NEWS_URL = 'https://news.google.com/rss?hl'
-WEATHER_API_TOKEN = 'ea5fa6b82c3c1aeee6c40de12c7bf2e8'
+WEATHER_API_TOKEN = ''
 WEATHER_LANG = 'en'
 WEATHER_API_URL = 'http://api.openweathermap.org/data/2.5/weather'
 GEOIP_API_TOKEN = ''
@@ -231,7 +231,6 @@ class Weather(Frame):
                     lon={lon}&lang={WEATHER_LANG}&appid={WEATHER_API_TOKEN}"
 
             else:
-                actual_location2 = ""
                 # get weather
                 weather_req_url = f"{WEATHER_API_URL}?lat={LATITUDE}&lon={LONGITUDE}&\
                     lang={WEATHER_LANG}&appid={WEATHER_API_TOKEN}"
@@ -249,6 +248,7 @@ class Weather(Frame):
             currently2 = weather_obj['weather'][0]['main']
             forecast2 = weather_obj['weather'][0]['description']
 
+            actual_location2 = weather_obj['name']
             icon_id = weather_obj['weather'][0]['icon']
 
             icon2 = icon_lookup.get(icon_id, None) or None
